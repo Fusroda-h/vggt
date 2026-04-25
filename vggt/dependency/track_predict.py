@@ -18,6 +18,7 @@ def predict_tracks(
     query_frame_num=5,
     keypoint_extractor="aliked+sp",
     max_points_num=163840,
+    fine_chunk=40960,
     fine_tracking=True,
     complete_non_vis=True,
 ):
@@ -40,6 +41,7 @@ def predict_tracks(
         query_frame_num: Number of query frames to use. Default is 5.
         keypoint_extractor: Method for keypoint extraction. Default is "aliked+sp".
         max_points_num: Maximum number of points to process at once. Default is 163840.
+        fine_chunk: Maximum patch batch size used by the fine tracker. Default is 40960.
         fine_tracking: Whether to use fine tracking. Default is True.
         complete_non_vis: Whether to augment non-visible frames. Default is True.
 
@@ -90,6 +92,7 @@ def predict_tracks(
             keypoint_extractors,
             tracker,
             max_points_num,
+            fine_chunk,
             fine_tracking,
             device,
         )
@@ -114,6 +117,7 @@ def predict_tracks(
             keypoint_extractors,
             tracker,
             max_points_num,
+            fine_chunk,
             fine_tracking,
             min_vis=500,
             non_vis_thresh=0.1,
@@ -141,6 +145,7 @@ def _forward_on_query(
     keypoint_extractors,
     tracker,
     max_points_num,
+    fine_chunk,
     fine_tracking,
     device,
 ):
@@ -156,6 +161,7 @@ def _forward_on_query(
         keypoint_extractors: Initialized feature extractors
         tracker: VGG-SFM tracker
         max_points_num: Maximum number of points to process at once
+        fine_chunk: Maximum patch batch size used by the fine tracker
         fine_tracking: Whether to use fine tracking
         device: Device to use for computation
 
@@ -197,7 +203,10 @@ def _forward_on_query(
             query_points = query_points[:, valid_mask]  # Make sure shape is compatible
             pred_conf = pred_conf[valid_mask]
             pred_point_3d = pred_point_3d[valid_mask]
-            pred_color = pred_color[valid_mask]
+            pred_color = pred_color[valid_mask.detach().cpu().numpy()]
+
+        pred_conf = pred_conf.detach().cpu().numpy()
+        pred_point_3d = pred_point_3d.detach().cpu().numpy()
     else:
         pred_conf = None
         pred_point_3d = None
@@ -218,7 +227,12 @@ def _forward_on_query(
         query_points = [query_points]
 
     pred_track, pred_vis, _ = predict_tracks_in_chunks(
-        tracker, images_feed, query_points, fmaps_feed, fine_tracking=fine_tracking
+        tracker,
+        images_feed,
+        query_points,
+        fmaps_feed,
+        fine_tracking=fine_tracking,
+        fine_chunk=fine_chunk,
     )
 
     pred_track, pred_vis = switch_tensor_order([pred_track, pred_vis], reorder_index, dim=1)
@@ -242,6 +256,7 @@ def _augment_non_visible_frames(
     keypoint_extractors,
     tracker,
     max_points_num: int,
+    fine_chunk: int,
     fine_tracking: bool,
     *,
     min_vis: int = 500,
@@ -264,6 +279,7 @@ def _augment_non_visible_frames(
         keypoint_extractors: Initialized feature extractors
         tracker: VGG-SFM tracker
         max_points_num: Maximum number of points to process at once
+        fine_chunk: Maximum patch batch size used by the fine tracker
         fine_tracking: Whether to use fine tracking
         min_vis: Minimum visibility threshold
         non_vis_thresh: Non-visibility threshold
@@ -311,6 +327,7 @@ def _augment_non_visible_frames(
                 cur_extractors,
                 tracker,
                 max_points_num,
+                fine_chunk,
                 fine_tracking,
                 device,
             )
